@@ -61,9 +61,10 @@ function validateProject(input,expectedId){
   if(input.scenes.length<1||input.scenes.length>100||input.assets.length>500)throw fail(400,'장면 또는 에셋 개수 제한 초과');
   const str=(x,max=200)=>typeof x==='string'?x.slice(0,max):'';
   const bounded=(n,min,max,def)=>Number.isFinite(Number(n))?Math.min(max,Math.max(min,Number(n))):def;
-  const assets=input.assets.map(a=>({id:str(a.id,60),name:str(a.name,180),kind:['image','audio','font'].includes(a.kind)?a.kind:'audio',mime:str(a.mime,90),path:str(a.path,220),size:bounded(a.size,0,MEDIA_LIMIT,0)}));
+  const assets=input.assets.map(a=>({id:str(a.id,60),name:str(a.name,180),kind:['image','video','audio','font'].includes(a.kind)?a.kind:'audio',mime:str(a.mime,90),path:str(a.path,220),size:bounded(a.size,0,MEDIA_LIMIT,0)}));
   const set=new Set();for(const a of assets){if(!safeId(a.id)||set.has(a.id)||!/^media\/[a-zA-Z0-9._-]+$/.test(a.path))throw fail(400,'에셋 경로 또는 ID가 올바르지 않습니다.');set.add(a.id);}
   const assetById=new Map(assets.map(a=>[a.id,a]));
+  const visual=id=>['image','video'].includes(assetById.get(id)?.kind);
   const overlays=(items,assetById)=>Array.isArray(items)?items.slice(0,32).map(o=>({id:safeId(o?.id)?o.id:newId(),text:str(o?.text,300),x:bounded(o?.x,0,1,.5),y:bounded(o?.y,0,1,.5),size:bounded(o?.size,8,240,32),color:/^#[0-9a-fA-F]{6}$/.test(o?.color)?o.color:'#f5f4ed',fontAssetId:assetById.get(o?.fontAssetId)?.kind==='font'?o.fontAssetId:null,fontFamily:str(o?.fontFamily,160)||'Inter, Segoe UI, Arial, sans-serif',align:['left','center','right'].includes(o?.align)?o.align:'center'})):[];
   const steps=(items,assetById)=>Array.isArray(items)?items.slice(0,8).map(step=>({id:safeId(step?.id)?step.id:newId(),label:str(step?.label,100),audioId:assetById.get(step?.audioId)?.kind==='audio'?step.audioId:null,audioStart:bounded(step?.audioStart,0,36000,0),audioDuration:bounded(step?.audioDuration,.1,180,2)})):[];
   const scenes=input.scenes.map(s=>({id:safeId(s.id)?s.id:newId(),type:['intro','original','sample','outro','compare','process','custom'].includes(s.type)?s.type:'custom',
@@ -72,11 +73,11 @@ function validateProject(input,expectedId){
     transition:['cut','fade','slide','wipe','zoom','blur'].includes(s.transition)?s.transition:'fade',
     transitionDuration:bounded(s.transitionDuration,0.1,1.5,0.5),
     bg:/^#[0-9a-fA-F]{6}$/.test(s.bg)?s.bg:'#171b21',accent:/^#[0-9a-fA-F]{6}$/.test(s.accent)?s.accent:'#dfddcf',
-    imageId:assetById.get(s.imageId)?.kind==='image'?s.imageId:null,backgroundImageId:assetById.get(s.backgroundImageId)?.kind==='image'?s.backgroundImageId:null,
-    backgroundImageOpacity:bounded(s.backgroundImageOpacity,0,1,0.22),backgroundImageFit:['cover','contain'].includes(s.backgroundImageFit)?s.backgroundImageFit:'cover',
+    imageId:visual(s.imageId)?s.imageId:null,backgroundImageId:visual(s.backgroundImageId)?s.backgroundImageId:null,
+    backgroundImageOpacity:bounded(s.backgroundImageOpacity,0,1,0.22),backgroundImageFit:['cover','contain'].includes(s.backgroundImageFit)?s.backgroundImageFit:'cover',backgroundImageScale:bounded(s.backgroundImageScale,.25,3,1),imageScale:bounded(s.imageScale,.25,3,1),
     fontAssetId:assetById.get(s.fontAssetId)?.kind==='font'?s.fontAssetId:null,fontFamily:str(s.fontFamily,160)||'Inter, Segoe UI, Arial, sans-serif',
     audioId:assetById.get(s.audioId)?.kind==='audio'?s.audioId:null,
-    leftImageId:assetById.get(s.leftImageId)?.kind==='image'?s.leftImageId:null,rightImageId:assetById.get(s.rightImageId)?.kind==='image'?s.rightImageId:null,
+    leftImageId:visual(s.leftImageId)?s.leftImageId:null,rightImageId:visual(s.rightImageId)?s.rightImageId:null,leftMediaScale:bounded(s.leftMediaScale,.25,3,1),rightMediaScale:bounded(s.rightMediaScale,.25,3,1),
     leftLabel:str(s.leftLabel,100)||'ORIGINAL',rightLabel:str(s.rightLabel,100)||'SAMPLED',leftAudioId:assetById.get(s.leftAudioId)?.kind==='audio'?s.leftAudioId:null,rightAudioId:assetById.get(s.rightAudioId)?.kind==='audio'?s.rightAudioId:null,leftAudioStart:bounded(s.leftAudioStart,0,36000,0),rightAudioStart:bounded(s.rightAudioStart,0,36000,0),
     textOverlays:overlays(s.textOverlays,assetById),processSteps:steps(s.processSteps,assetById),
     audioStart:bounded(s.audioStart,0,36000,0),volume:bounded(s.volume,0,1,1),audioFadeIn:bounded(s.audioFadeIn,0,5,0),audioFadeOut:bounded(s.audioFadeOut,0,5,0),showWaveform:!!s.showWaveform}));
@@ -89,10 +90,14 @@ function withSceneDefaults(project){
     if(!Object.hasOwn(scene,'backgroundImageId'))scene.backgroundImageId=null;
     if(!Object.hasOwn(scene,'backgroundImageOpacity'))scene.backgroundImageOpacity=0.22;
     if(!Object.hasOwn(scene,'backgroundImageFit'))scene.backgroundImageFit='cover';
+    if(!Object.hasOwn(scene,'backgroundImageScale'))scene.backgroundImageScale=1;
+    if(!Object.hasOwn(scene,'imageScale'))scene.imageScale=1;
     if(!Object.hasOwn(scene,'fontAssetId'))scene.fontAssetId=null;
     if(!Object.hasOwn(scene,'fontFamily'))scene.fontFamily='Inter, Segoe UI, Arial, sans-serif';
     if(!Object.hasOwn(scene,'leftImageId'))scene.leftImageId=null;
     if(!Object.hasOwn(scene,'rightImageId'))scene.rightImageId=null;
+    if(!Object.hasOwn(scene,'leftMediaScale'))scene.leftMediaScale=1;
+    if(!Object.hasOwn(scene,'rightMediaScale'))scene.rightMediaScale=1;
     if(!Object.hasOwn(scene,'leftLabel'))scene.leftLabel='ORIGINAL';
     if(!Object.hasOwn(scene,'rightLabel'))scene.rightLabel='SAMPLED';
     if(!Object.hasOwn(scene,'leftAudioId'))scene.leftAudioId=null;
@@ -126,7 +131,7 @@ async function persist(id, next, {forceBackup=false}={}){
 }
 async function parseJSON(req,limit=JSON_LIMIT){const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)throw fail(413,'요청 용량 제한 초과');chunks.push(chunk);}try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw fail(400,'JSON 파싱 실패');}}
 async function streamToFile(req,target,limit){const f=await fsp.open(target,'wx');let size=0;try{for await(const chunk of req){size+=chunk.length;if(size>limit)throw fail(413,'미디어 파일 크기 제한 초과');await f.write(chunk);}await f.sync();return size;}finally{await f.close();if(size>limit)await fsp.rm(target,{force:true}).catch(()=>{});}}
-function contentType(mime){const good=['audio/mpeg','audio/mp3','audio/wav','audio/x-wav','audio/wave','audio/ogg','audio/mp4','audio/flac','audio/x-flac','image/jpeg','image/png','image/webp','image/gif','font/ttf','font/otf','font/woff','font/woff2','application/font-sfnt','application/x-font-ttf','application/x-font-otf','application/font-woff','application/font-woff2'];return good.includes(mime)?mime:'application/octet-stream';}
+function contentType(mime){const good=['audio/mpeg','audio/mp3','audio/wav','audio/x-wav','audio/wave','audio/ogg','audio/mp4','audio/flac','audio/x-flac','image/jpeg','image/png','image/webp','image/gif','video/mp4','font/ttf','font/otf','font/woff','font/woff2','application/font-sfnt','application/x-font-ttf','application/x-font-otf','application/font-woff','application/font-woff2'];return good.includes(mime)?mime:'application/octet-stream';}
 async function serveMedia(req,res,id,assetId){const p=await loadProject(id);const a=p.assets.find(a=>a.id===assetId);if(!a)throw fail(404,'파일이 없습니다.');
   const file=path.join(projDir(id),a.path);const stat=await fsp.stat(file).catch(()=>null);if(!stat)throw fail(404,'원본 파일이 없어졌습니다.');
   const mime=contentType(a.mime);let start=0,end=stat.size-1,status=200;const range=req.headers.range;
@@ -199,7 +204,7 @@ async function request(req,res){
   }
   if(seg[3]==='assets'&&seg.length===4&&req.method==='POST'){
     return await serialized(id,async()=>{
-      const mime=(u.searchParams.get('mime')||'').slice(0,90),kind=mime.startsWith('image/')?'image':mime.startsWith('audio/')?'audio':(mime.startsWith('font/')||['application/font-sfnt','application/x-font-ttf','application/x-font-otf','application/font-woff','application/font-woff2'].includes(mime))?'font':null;
+      const mime=(u.searchParams.get('mime')||'').slice(0,90),kind=mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':(mime.startsWith('font/')||['application/font-sfnt','application/x-font-ttf','application/x-font-otf','application/font-woff','application/font-woff2'].includes(mime))?'font':null;
       if(!kind||contentType(mime)==='application/octet-stream')throw fail(415,'지원하지 않는 오디오/이미지/폰트 형식입니다.');
       const name=(u.searchParams.get('name')||'media').replace(/[\\/\0\r\n]/g,'_').slice(0,130);
       const aid=newId(),extension=path.extname(name).replace(/[^.a-zA-Z0-9]/g,'').slice(0,10)|| (kind==='image'?'.png':kind==='font'?'.woff2':'.wav');

@@ -11,9 +11,9 @@ const effects=['cut','fade','slide','wipe','zoom','blur'];
 const presetLabels={type:'Type',editorial:'Editorial',minimal:'Minimal',center:'Center',split:'Split',side:'Side',record:'Record'};
 const effectLabels={cut:'Cut',fade:'Fade',slide:'Slide',wipe:'Wipe',zoom:'Zoom',blur:'Blur'};
 const fontMimeTypes=new Set(['application/font-sfnt','application/x-font-ttf','application/x-font-otf','application/font-woff','application/font-woff2']);
-let project=null,selectedId=null,revision=0,dirty=false,changeSerial=0,saving=null,saveTimer=null,saveError=false,playhead=0,playing=false,clockStart=0,exporting=false,recorder=null,exportType='webm',exportChunks=[];
+let project=null,selectedId=null,revision=0,dirty=false,changeSerial=0,saving=null,saveTimer=null,saveError=false,playhead=0,playing=false,clockStart=0,exporting=false,recorder=null,exportType='webm',exportChunks=[],undoStack=[],redoStack=[];
 let audioContext=null,mediaSource=null,mixOutput=null;const audio=new Audio();audio.preload='auto';let playingAsset=null;
-const stage=$('stage'),ctx=stage.getContext('2d',{alpha:false});const imageCache=new Map(),peakCache=new Map(),pendingPeaks=new Set(),fontCache=new Map();
+const stage=$('stage'),ctx=stage.getContext('2d',{alpha:false});const imageCache=new Map(),videoCache=new Map(),peakCache=new Map(),pendingPeaks=new Set(),fontCache=new Map();
 let toastTimer=null;
 function toast(msg){$('toast').textContent=msg;$('toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('show'),4200);}
 function status(text,cls=''){$('saveStatus').className='save-status '+cls;$('saveStatus').innerHTML='<span class="status-dot"></span>'+esc(text);}
@@ -25,7 +25,9 @@ function previewTimeOf(id){const sc=project?.scenes.find(x=>x.id===id);return st
 function startTimeOf(id){let t=0;for(const s of project.scenes){if(s.id===id)break;t+=s.duration;}return t;}
 function assetBy(id){return project?.assets.find(a=>a.id===id);}
 function updateDirty(){dirty=true;changeSerial++;status('저장 전 변경', 'dirty');clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveNow(),850);}
-function mutate(key,value){if(!project)return;const s=currentScene();if(!s)return;s[key]=value;updateDirty();renderTimeline();drawFrame(playhead);updateTransport();}
+function rememberUndo(){if(!project)return;undoStack.push(structuredClone({scenes:project.scenes,format:project.format,name:project.name}));if(undoStack.length>100)undoStack.shift();redoStack=[];}
+function undo(){const snapshot=undoStack.pop();if(!snapshot)return toast('되돌릴 변경이 없습니다.');redoStack.push(structuredClone({scenes:project.scenes,format:project.format,name:project.name}));project.scenes=snapshot.scenes;project.format=snapshot.format;project.name=snapshot.name;selectedId=project.scenes.some(s=>s.id===selectedId)?selectedId:project.scenes[0]?.id;updateDirty();renderAll();toast('변경을 되돌렸습니다.');}
+function mutate(key,value){if(!project)return;const s=currentScene();if(!s)return;rememberUndo();s[key]=value;updateDirty();renderTimeline();drawFrame(playhead);updateTransport();}
 async function saveNow(){clearTimeout(saveTimer);if(!project||!dirty)return saving||undefined;if(saving){await saving;return saveNow();}
   const snapshot=structuredClone(project);snapshot.revision=revision;const marker=changeSerial;
   status('저장 중…','dirty');saving=(async()=>{
@@ -37,7 +39,7 @@ async function saveNow(){clearTimeout(saveTimer);if(!project||!dirty)return savi
 }
 async function persistBeforeSwitch(){if(dirty||saving)await saveNow();if(saveError)throw Error('변경 사항이 저장되지 않아 전환을 취소했습니다.');}
 async function getProjects(activeId){const data=await api('/api/projects');$('projectSelect').innerHTML=data.projects.map(p=>`<option value="${esc(p.id)}" ${p.id===activeId?'selected':''}>${esc(p.name)}</option>`).join('');}
-async function load(id){stop();await persistBeforeSwitch();const data=await api(`/api/projects/${id}`);project=data.project;revision=project.revision;selectedId=project.scenes[0]?.id;dirty=false;saveError=false;playhead=0;imageCache.clear();peakCache.clear();pendingPeaks.clear();playingAsset=null;audio.pause();audio.removeAttribute('src');await getProjects(id);status('저장 완료');renderAll();}
+async function load(id){stop();await persistBeforeSwitch();const data=await api(`/api/projects/${id}`);project=data.project;revision=project.revision;selectedId=project.scenes[0]?.id;dirty=false;saveError=false;playhead=0;undoStack=[];redoStack=[];imageCache.clear();videoCache.clear();peakCache.clear();pendingPeaks.clear();playingAsset=null;audio.pause();audio.removeAttribute('src');await getProjects(id);status('저장 완료');renderAll();}
 async function createProject(){try{await persistBeforeSwitch();const name=prompt('새 프로젝트 이름','New Sample Breakdown');if(name===null)return;const response=await api('/api/projects',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:name.trim()||'Untitled Breakdown'})});await load(response.project.id);}catch(e){toast(e.message);}}
 async function duplicate(){try{await persistBeforeSwitch();const response=await api(`/api/projects/${project.id}/duplicate`,{method:'POST'});await load(response.project.id);toast('프로젝트를 복제했습니다.');}catch(e){toast(e.message);}}
 function renderAll(){if(!project)return;$('formatSelect').value=project.format;$('previewResolution').textContent=project.format==='16:9'?'1920 × 1080':'1080 × 1920';
@@ -46,9 +48,9 @@ function renderAll(){if(!project)return;$('formatSelect').value=project.format;$
 }
 function renderAssets(){const list=$('assetList');$('assetCount').textContent=project.assets.length;
   if(!project.assets.length){list.innerHTML='<div class="empty-library">아직 업로드된 파일이 없습니다.</div>';return;}
-  list.innerHTML=project.assets.map(a=>{const type=a.kind==='image'?'IMAGE':a.kind==='audio'?'AUDIO':'FONT',icon=a.kind==='image'?'▣':a.kind==='audio'?'♫':'𝐅';return `<div class="asset-item ${a.kind}" data-asset="${esc(a.id)}" title="클릭하여 선택한 장면에 적용"><div class="asset-symbol">${icon}</div><div class="asset-info"><strong>${esc(a.name)}</strong><small>${type} · ${(a.size/1024/1024).toFixed(1)}MB</small></div><span class="asset-add">＋</span></div>`;}).join('');
+  list.innerHTML=project.assets.map(a=>{const type=a.kind==='image'?'IMAGE':a.kind==='video'?'VIDEO':a.kind==='audio'?'AUDIO':'FONT',icon=a.kind==='image'?'▣':a.kind==='video'?'▶':a.kind==='audio'?'♫':'𝐅';return `<div class="asset-item ${a.kind}" data-asset="${esc(a.id)}" title="클릭하여 선택한 장면에 적용"><div class="asset-symbol">${icon}</div><div class="asset-info"><strong>${esc(a.name)}</strong><small>${type} · ${(a.size/1024/1024).toFixed(1)}MB</small></div><span class="asset-add">＋</span></div>`;}).join('');
   list.querySelectorAll('[data-asset]').forEach(el=>el.addEventListener('click',()=>{
-    const a=assetBy(el.dataset.asset),field=a.kind==='image'?'imageId':a.kind==='audio'?'audioId':'fontAssetId';mutate(field,a.id);renderInspector();toast(`${a.name} → 현재 장면에 적용`);if(a.kind==='audio')loadPeaks(a.id);if(a.kind==='font')loadFontAsset(a.id);
+    const a=assetBy(el.dataset.asset),field=['image','video'].includes(a.kind)?'imageId':a.kind==='audio'?'audioId':'fontAssetId';mutate(field,a.id);renderInspector();toast(`${a.name} → 현재 장면에 적용`);if(a.kind==='audio')loadPeaks(a.id);if(a.kind==='font')loadFontAsset(a.id);
   }));
 }
 function renderTimeline(){if(!project)return;$('sceneCount').textContent=`${project.scenes.length} scenes`;
@@ -66,9 +68,9 @@ function renderTimeline(){if(!project)return;$('sceneCount').textContent=`${proj
   }
 }
 function selectScene(id){if(!project.scenes.some(s=>s.id===id))return;stop();selectedId=id;playhead=previewTimeOf(id);renderTimeline();renderInspector();updateTransport();drawFrame(playhead);}
-function updateCollection(field,id,key,value){const s=currentScene(),item=s?.[field]?.find(x=>x.id===id);if(!item)return;item[key]=value;updateDirty();drawFrame(playhead);}
+function updateCollection(field,id,key,value){const s=currentScene(),item=s?.[field]?.find(x=>x.id===id);if(!item)return;rememberUndo();item[key]=value;updateDirty();drawFrame(playhead);}
 function renderInspector(){const s=currentScene();if(!s)return;
-  const images=project.assets.filter(a=>a.kind==='image'),audios=project.assets.filter(a=>a.kind==='audio'),fonts=project.assets.filter(a=>a.kind==='font');
+  const images=project.assets.filter(a=>['image','video'].includes(a.kind)),audios=project.assets.filter(a=>a.kind==='audio'),fonts=project.assets.filter(a=>a.kind==='font');
   const options=(list,current,none)=>`<option value="">${none}</option>`+list.map(a=>`<option value="${esc(a.id)}" ${a.id===current?'selected':''}>${esc(a.name)}</option>`).join('');
   const overlayEditor=(s.textOverlays||[]).map((o,i)=>`<div class="collection-card"><div class="collection-head"><strong>텍스트 ${i+1}</strong><button class="danger small-button" data-delete-overlay="${esc(o.id)}">삭제</button></div><label class="field-label">내용</label><input class="field-input" type="text" maxlength="300" data-overlay-id="${esc(o.id)}" data-overlay-field="text" value="${esc(o.text)}"/><div class="field-group field-row"><div><label class="field-label">X (0~1)</label><input class="field-input" type="number" min="0" max="1" step="0.01" data-overlay-id="${esc(o.id)}" data-overlay-field="x" value="${o.x}"/></div><div><label class="field-label">Y (0~1)</label><input class="field-input" type="number" min="0" max="1" step="0.01" data-overlay-id="${esc(o.id)}" data-overlay-field="y" value="${o.y}"/></div></div><div class="field-group field-row"><div><label class="field-label">크기</label><input class="field-input" type="number" min="8" max="240" data-overlay-id="${esc(o.id)}" data-overlay-field="size" value="${o.size}"/></div><div><label class="field-label">색상</label><input class="field-input" type="color" data-overlay-id="${esc(o.id)}" data-overlay-field="color" value="${esc(o.color)}"/></div></div><div class="field-group field-row"><div><label class="field-label">폰트 파일</label><select class="field-input" data-overlay-id="${esc(o.id)}" data-overlay-field="fontAssetId">${options(fonts,o.fontAssetId,'장면 폰트 사용')}</select></div><div><label class="field-label">정렬</label><select class="field-input" data-overlay-id="${esc(o.id)}" data-overlay-field="align">${['left','center','right'].map(a=>`<option value="${a}" ${o.align===a?'selected':''}>${a}</option>`).join('')}</select></div></div><label class="field-label">보조 폰트 스택</label><input class="field-input" type="text" maxlength="160" data-overlay-id="${esc(o.id)}" data-overlay-field="fontFamily" value="${esc(o.fontFamily)}"/></div>`).join('');
   const processEditor=(s.processSteps||[]).map((step,i)=>`<div class="collection-card"><div class="collection-head"><strong>STEP ${i+1}</strong><button class="danger small-button" data-delete-step="${esc(step.id)}">삭제</button></div><label class="field-label">라벨</label><input class="field-input" type="text" maxlength="100" data-step-id="${esc(step.id)}" data-step-field="label" value="${esc(step.label)}"/><div class="field-group"><label class="field-label">Step 오디오</label><select class="field-input" data-step-id="${esc(step.id)}" data-step-field="audioId">${options(audios,step.audioId,'오디오 없음')}</select></div><div class="field-group field-row"><div><label class="field-label">시작 (초)</label><input class="field-input" type="number" min="0" step="0.1" data-step-id="${esc(step.id)}" data-step-field="audioStart" value="${step.audioStart}"/></div><div><label class="field-label">길이 (초)</label><input class="field-input" type="number" min="0.1" max="180" step="0.1" data-step-id="${esc(step.id)}" data-step-field="audioDuration" value="${step.audioDuration}"/></div></div></div>`).join('');
@@ -77,9 +79,11 @@ function renderInspector(){const s=currentScene();if(!s)return;
     <div class="field-group"><label class="field-label">제목</label><input class="field-input" type="text" maxlength="150" data-field="title" value="${esc(s.title)}"/></div>
     <div class="field-group"><label class="field-label">보조 문구 / 아티스트</label><input class="field-input" type="text" maxlength="250" data-field="subtitle" value="${esc(s.subtitle)}"/></div>
     <div class="field-group field-row"><div><label class="field-label">장면 길이 (초)</label><input class="field-input" type="number" step="0.1" min="0.5" max="180" data-field="duration" value="${s.duration}" /></div><div><label class="field-label">오디오 시작 (초)</label><input class="field-input" type="number" step="0.1" min="0" data-field="audioStart" value="${s.audioStart}" /></div></div>
-    <div class="field-group"><label class="field-label">이미지 / 앨범 커버</label><select class="field-input" data-field="imageId">${options(images,s.imageId,'이미지 없음')}</select></div>
-    <div class="field-group"><label class="field-label">배경 이미지</label><select class="field-input" data-field="backgroundImageId">${options(images,s.backgroundImageId,'배경 이미지 없음')}</select></div>
+    <div class="field-group"><label class="field-label">이미지 / 앨범 커버 / GIF / MP4</label><select class="field-input" data-field="imageId">${options(images,s.imageId,'이미지 없음')}</select><div class="mini-info">정지 이미지, GIF, MP4를 장면 미디어로 사용할 수 있습니다.</div></div>
+    <div class="field-group"><label class="field-label">장면 미디어 크기 <span id="imageScaleVal">${Math.round((s.imageScale??1)*100)}%</span></label><input class="field-input" type="range" min="0.25" max="3" step="0.01" data-field="imageScale" value="${s.imageScale??1}"/></div>
+    <div class="field-group"><label class="field-label">배경 이미지 / GIF / MP4</label><select class="field-input" data-field="backgroundImageId">${options(images,s.backgroundImageId,'배경 이미지 없음')}</select></div>
     <div class="field-group field-row"><div><label class="field-label">배경 이미지 불투명도 <span id="bgOpacityVal">${Math.round((s.backgroundImageOpacity??.22)*100)}%</span></label><input class="field-input" type="range" min="0" max="1" step="0.01" data-field="backgroundImageOpacity" value="${s.backgroundImageOpacity??.22}"/></div><div><label class="field-label">배경 이미지 맞춤</label><select class="field-input" data-field="backgroundImageFit"><option value="cover" ${(s.backgroundImageFit||'cover')==='cover'?'selected':''}>cover</option><option value="contain" ${(s.backgroundImageFit||'cover')==='contain'?'selected':''}>contain</option></select></div></div>
+    <div class="field-group"><label class="field-label">배경 미디어 크기 <span id="bgScaleVal">${Math.round((s.backgroundImageScale??1)*100)}%</span></label><input class="field-input" type="range" min="0.25" max="3" step="0.01" data-field="backgroundImageScale" value="${s.backgroundImageScale??1}"/></div>
     <div class="field-group"><label class="field-label">커스텀 폰트 파일</label><select class="field-input" data-field="fontAssetId">${options(fonts,s.fontAssetId,'기본 폰트 사용')}</select><div class="mini-info">TTF · OTF · WOFF · WOFF2 업로드 가능</div></div>
     <div class="field-group"><label class="field-label">기본 / 보조 폰트 스택</label><input class="field-input" type="text" maxlength="160" data-field="fontFamily" value="${esc(s.fontFamily||'Inter, Segoe UI, Arial, sans-serif')}"/><div class="mini-info">커스텀 폰트를 선택하지 않았을 때 사용할 CSS 폰트 이름입니다.</div></div>
     <div class="field-group"><label class="field-label">이 장면에서 재생할 오디오</label><select class="field-input" data-field="audioId">${options(audios,s.audioId,'오디오 없음')}</select><div class="mini-info">파형은 오디오를 지정하면 자동 분석됩니다.</div></div>
@@ -106,9 +110,12 @@ function renderInspector(){const s=currentScene();if(!s)return;
     if(['leftAudioStart','rightAudioStart'].includes(el.dataset.field))value=clamp(value||0,0,36000);
     if(['audioFadeIn','audioFadeOut'].includes(el.dataset.field))value=clamp(value||0,0,5);
     if(el.dataset.field==='backgroundImageOpacity')value=clamp(value||0,0,1);
+    if(['backgroundImageScale','imageScale','leftMediaScale','rightMediaScale'].includes(el.dataset.field))value=clamp(value||1,.25,3);
     mutate(el.dataset.field,value);
     if(el.dataset.field==='volume')$('volumeVal').textContent=Math.round(value*100)+'%';
     if(el.dataset.field==='backgroundImageOpacity')$('bgOpacityVal').textContent=Math.round(value*100)+'%';
+    if(el.dataset.field==='backgroundImageScale')$('bgScaleVal').textContent=Math.round(value*100)+'%';
+    if(el.dataset.field==='imageScale')$('imageScaleVal').textContent=Math.round(value*100)+'%';
     if(el.dataset.field==='transitionDuration')$('transitionVal').textContent=value.toFixed(2)+'초';
     if(el.dataset.field==='audioId'&&value)loadPeaks(value);
     if(el.dataset.field==='fontAssetId'&&value)loadFontAsset(value);
@@ -120,10 +127,10 @@ function renderInspector(){const s=currentScene();if(!s)return;
   $('inspector').querySelectorAll('[data-step-id]').forEach(el=>el.addEventListener('input',()=>{let value=el.type==='number'?Number(el.value):el.value;
     if(el.dataset.stepField==='audioStart')value=clamp(value||0,0,36000);if(el.dataset.stepField==='audioDuration')value=clamp(value||.1,.1,180);updateCollection('processSteps',el.dataset.stepId,el.dataset.stepField,value);if(el.dataset.stepField==='audioId'&&value)loadPeaks(value);
   }));
-  $('inspector').querySelectorAll('[data-delete-overlay]').forEach(el=>el.addEventListener('click',()=>{s.textOverlays=s.textOverlays.filter(o=>o.id!==el.dataset.deleteOverlay);updateDirty();renderInspector();drawFrame(playhead);}));
-  $('inspector').querySelectorAll('[data-delete-step]').forEach(el=>el.addEventListener('click',()=>{s.processSteps=s.processSteps.filter(step=>step.id!==el.dataset.deleteStep);updateDirty();renderInspector();drawFrame(playhead);}));
-  $('addTextOverlay').onclick=()=>{s.textOverlays.push({id:uid(),text:'TEXT',x:.5,y:.5,size:32,color:'#f5f4ed',fontAssetId:null,fontFamily:s.fontFamily||'Inter, Segoe UI, Arial, sans-serif',align:'center'});updateDirty();renderInspector();drawFrame(playhead);};
-  const addStep=$('addProcessStep');if(addStep)addStep.onclick=()=>{s.processSteps.push({id:uid(),label:`STEP ${s.processSteps.length+1}`,audioId:null,audioStart:0,audioDuration:2});updateDirty();renderInspector();drawFrame(playhead);};
+  $('inspector').querySelectorAll('[data-delete-overlay]').forEach(el=>el.addEventListener('click',()=>{rememberUndo();s.textOverlays=s.textOverlays.filter(o=>o.id!==el.dataset.deleteOverlay);updateDirty();renderInspector();drawFrame(playhead);}));
+  $('inspector').querySelectorAll('[data-delete-step]').forEach(el=>el.addEventListener('click',()=>{rememberUndo();s.processSteps=s.processSteps.filter(step=>step.id!==el.dataset.deleteStep);updateDirty();renderInspector();drawFrame(playhead);}));
+  $('addTextOverlay').onclick=()=>{rememberUndo();s.textOverlays.push({id:uid(),text:'TEXT',x:.5,y:.5,size:32,color:'#f5f4ed',fontAssetId:null,fontFamily:s.fontFamily||'Inter, Segoe UI, Arial, sans-serif',align:'center'});updateDirty();renderInspector();drawFrame(playhead);};
+  const addStep=$('addProcessStep');if(addStep)addStep.onclick=()=>{rememberUndo();s.processSteps.push({id:uid(),label:`STEP ${s.processSteps.length+1}`,audioId:null,audioStart:0,audioDuration:2});updateDirty();renderInspector();drawFrame(playhead);};
   $('inspector').querySelectorAll('[data-preset]').forEach(el=>el.addEventListener('click',()=>{mutate('preset',el.dataset.preset);renderInspector();}));
   $('inspector').querySelectorAll('[data-effect]').forEach(el=>el.addEventListener('click',()=>{mutate('transition',el.dataset.effect);renderInspector();}));
   $('duplicateScene').onclick=()=>{
@@ -153,6 +160,8 @@ function tick(){if(!playing)return;playhead=clamp((performance.now()-clockStart)
 function imageFor(id){if(!id)return null;const k=project.id+':'+id;if(imageCache.has(k))return imageCache.get(k);
   const img=new Image();img.onload=()=>drawFrame(playhead);img.onerror=()=>imageCache.set(k,null);img.src=assetUrl(id);imageCache.set(k,img);return img;
 }
+function visualFor(id,time=0){const asset=assetBy(id);if(!asset)return null;if(asset.kind!=='video')return imageFor(id);const k=project.id+':'+id;if(!videoCache.has(k)){const video=document.createElement('video');video.muted=true;video.loop=true;video.playsInline=true;video.preload='auto';video.onloadeddata=()=>drawFrame(playhead);video.onerror=()=>videoCache.set(k,null);video.src=assetUrl(id);videoCache.set(k,video);}const video=videoCache.get(k);if(video?.readyState>=2&&Number.isFinite(video.duration)&&video.duration>0){const target=time%video.duration;if(Math.abs(video.currentTime-target)>.12)video.currentTime=target;}return video;}
+function visualSize(media){return {width:media?.videoWidth||media?.naturalWidth||media?.width||0,height:media?.videoHeight||media?.naturalHeight||media?.height||0};}
 async function loadFontAsset(assetId){
   if(!assetId)return null;const existing=fontCache.get(assetId);if(existing?.loaded)return existing.family;if(existing?.loading)return existing.promise;
   if(!assetBy(assetId))return null;const family=`SBSFont_${assetId}`;
@@ -179,8 +188,8 @@ function rgba(hex,a){const v=hex.replace('#','');return `rgba(${parseInt(v.slice
 function roundRect(x,y,w,h,r,color){ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fillStyle=color;ctx.fill();}
 function centerText(txt,x,y,size,color,weight=600,maxWidth=Infinity,fontFamily='Inter, Segoe UI, Arial, sans-serif'){ctx.textAlign='center';ctx.textBaseline='middle';ctx.font=`${weight} ${size}px ${fontFamily}`;ctx.fillStyle=color;ctx.fillText(txt,x,y,maxWidth);}
 function leftText(txt,x,y,size,color,weight=600,maxWidth=Infinity,fontFamily='Inter, Segoe UI, Arial, sans-serif'){ctx.textAlign='left';ctx.textBaseline='middle';ctx.font=`${weight} ${size}px ${fontFamily}`;ctx.fillStyle=color;ctx.fillText(txt,x,y,maxWidth);}
-function cover(img,x,y,w,h,accent){ctx.save();roundRect(x-4,y-4,w+8,h+8,7,'#ffffff15');ctx.beginPath();ctx.roundRect(x,y,w,h,4);ctx.clip();
-  if(img?.complete&&img.naturalWidth){const scale=Math.max(w/img.width,h/img.height);const dw=img.width*scale,dh=img.height*scale;ctx.drawImage(img,x+(w-dw)/2,y+(h-dh)/2,dw,dh);}else{
+function cover(img,x,y,w,h,accent,mediaScale=1){ctx.save();roundRect(x-4,y-4,w+8,h+8,7,'#ffffff15');ctx.beginPath();ctx.roundRect(x,y,w,h,4);ctx.clip();
+  const source=visualSize(img);if((img?.complete||img?.readyState>=2)&&source.width){const scale=Math.max(w/source.width,h/source.height)*clamp(mediaScale,.25,3),dw=source.width*scale,dh=source.height*scale;ctx.drawImage(img,x+(w-dw)/2,y+(h-dh)/2,dw,dh);}else{
     const grad=ctx.createLinearGradient(x,y,x+w,y+h);grad.addColorStop(0,rgba(accent,.63));grad.addColorStop(1,'#282c38');fill(grad,x,y,w,h);
     ctx.strokeStyle='#ffffff30';ctx.lineWidth=3;for(let r=w*.12;r<w*.51;r+=w*.08){ctx.beginPath();ctx.arc(x+w/2,y+h/2,r,0,Math.PI*2);ctx.stroke();}
     ctx.beginPath();ctx.arc(x+w/2,y+h/2,w*.075,0,Math.PI*2);ctx.fillStyle='#d7d8cb';ctx.fill();}
@@ -196,13 +205,13 @@ function waveform(s,x,y,w,h,progress,accent){if(!s.audioId)return;loadPeaks(s.au
 function renderTextOverlays(s,W,H){for(const overlay of s.textOverlays||[]){if(!overlay.text)continue;ctx.save();ctx.textAlign=overlay.align||'center';ctx.textBaseline='middle';ctx.font=`600 ${clamp(overlay.size||32,8,240)}px ${fontFamilyFor(overlay)}`;ctx.fillStyle=overlay.color||'#f5f4ed';ctx.fillText(overlay.text,clamp(overlay.x??.5,0,1)*W,clamp(overlay.y??.5,0,1)*H,W*.92);ctx.restore();}}
 function renderScene(s,t){const W=stage.width,H=stage.height,cx=W/2,sy=W/960,land=W>H;
   const u=land?W/960:W/630,fontFamily=fontFamilyFor(s);ctx.save();fill(s.bg,0,0,W,H);
-  const bgImage=imageFor(s.backgroundImageId);if(bgImage?.complete&&bgImage.naturalWidth){ctx.save();ctx.globalAlpha=clamp(s.backgroundImageOpacity??.22,0,1);const scale=(s.backgroundImageFit==='contain'?Math.min:Math.max)(W/bgImage.width,H/bgImage.height),dw=bgImage.width*scale,dh=bgImage.height*scale;ctx.drawImage(bgImage,(W-dw)/2,(H-dh)/2,dw,dh);ctx.restore();}
+  const bgImage=visualFor(s.backgroundImageId,t),bgSize=visualSize(bgImage);if((bgImage?.complete||bgImage?.readyState>=2)&&bgSize.width){ctx.save();ctx.globalAlpha=clamp(s.backgroundImageOpacity??.22,0,1);const scale=(s.backgroundImageFit==='contain'?Math.min:Math.max)(W/bgSize.width,H/bgSize.height)*clamp(s.backgroundImageScale??1,.25,3),dw=bgSize.width*scale,dh=bgSize.height*scale;ctx.drawImage(bgImage,(W-dw)/2,(H-dh)/2,dw,dh);ctx.restore();}
   const grad=ctx.createRadialGradient(W*.62,H*.42,0,W*.62,H*.42,Math.max(W,H)*.75);grad.addColorStop(0,rgba(s.accent,.12));grad.addColorStop(1,'#00000000');fill(grad,0,0,W,H);
   const pad=W*.06;leftText('001  /  SOURCE STUDY',pad,H*.93,9*u,'#879096',700,Infinity,fontFamily);
-  const startEffect=clamp(t/.58,0,1),ease=1-Math.pow(1-startEffect,3);const image=imageFor(s.imageId);
+  const startEffect=clamp(t/.58,0,1),ease=1-Math.pow(1-startEffect,3);const image=visualFor(s.imageId,t);
   if(s.type==='compare'){
     const size=Math.min(W*.35,H*.47),gap=W*.07,leftX=cx-gap/2-size,rightX=cx+gap/2;
-    cover(imageFor(s.leftImageId),leftX,H*.22,size,size,s.accent);cover(imageFor(s.rightImageId),rightX,H*.22,size,size,s.accent);
+    cover(visualFor(s.leftImageId,t),leftX,H*.22,size,size,s.accent,s.leftMediaScale);cover(visualFor(s.rightImageId,t),rightX,H*.22,size,size,s.accent,s.rightMediaScale);
     centerText(s.leftLabel||'ORIGINAL',leftX+size/2,H*.17,13*u,'#d3e2d7',750,size,fontFamily);centerText(s.rightLabel||'SAMPLED',rightX+size/2,H*.17,13*u,'#ead7c7',750,size,fontFamily);
     centerText(s.title,cx,H*.78,34*u,'#f2f1ee',780,W*.88,fontFamily);centerText(s.subtitle,cx,H*.85,16*u,s.accent,480,W*.86,fontFamily);
   }else if(s.type==='process'){
@@ -212,7 +221,7 @@ function renderScene(s,t){const W=stage.width,H=stage.height,cx=W/2,sy=W/960,lan
     centerText(s.subtitle,cx,H*.87,15*u,s.accent,480,W*.86,fontFamily);
   }else if(s.type==='intro'){
     ctx.globalAlpha=.5+.5*ease;
-    if(s.preset==='record'){cover(image,cx-W*.17,H*.22,W*.34,Math.min(W*.34,H*.45),s.accent);centerText(s.title,cx,H*.76,38*u,'#f5f1e9',750,W*.9,fontFamily);}
+    if(s.preset==='record'){cover(image,cx-W*.17,H*.22,W*.34,Math.min(W*.34,H*.45),s.accent,s.imageScale);centerText(s.title,cx,H*.76,38*u,'#f5f1e9',750,W*.9,fontFamily);}
     else if(s.preset==='editorial'){
       leftText(s.title,pad+W*.02,H*.42,65*u,'#f1f1eb',800,W*.86,fontFamily);fill(s.accent,pad+W*.02,H*.52,W*.48,2*u);leftText(s.subtitle,pad+W*.02,H*.58,20*u,s.accent,500,W*.85,fontFamily);
     }else{
@@ -225,19 +234,19 @@ function renderScene(s,t){const W=stage.width,H=stage.height,cx=W/2,sy=W/960,lan
   }else if(s.preset==='split'||s.type==='sample'&&s.preset==='center'){
     const size=Math.min(W*.25,H*.49),source=project.scenes.find(x=>x.type==='original'&&x.imageId);const gap=W*.06;
     const leftX=cx-gap/2-size,rightX=cx+gap/2;
-    cover(imageFor(source?.imageId),leftX,H*.23,size,size,source?.accent||s.accent);
-    cover(image,rightX,H*.23,size,size,s.accent);
+    cover(visualFor(source?.imageId,t),leftX,H*.23,size,size,source?.accent||s.accent,source?.imageScale);
+    cover(image,rightX,H*.23,size,size,s.accent,s.imageScale);
     centerText('ORIGINAL',leftX+size/2,H*.2,11*u,'#c6d7ce',700,Infinity,fontFamily);centerText('THE FLIP',rightX+size/2,H*.2,11*u,'#d7c6b8',700,Infinity,fontFamily);
     centerText(s.title,cx,H*.78,33*u,'#f2f1ee',750,W*.85,fontFamily);centerText(s.subtitle,cx,H*.84,15*u,s.accent,480,W*.87,fontFamily);
   }else if(s.preset==='side'||s.preset==='editorial'){
-    const size=Math.min(W*.35,H*.58);cover(image,pad,H*.19,size,size,s.accent);
+    const size=Math.min(W*.35,H*.58);cover(image,pad,H*.19,size,size,s.accent,s.imageScale);
     const tx=pad+size+W*.06;leftText('ORIGINAL / SOURCE',tx,H*.34,11*u,s.accent,750,W-tx-pad,fontFamily);
     leftText(s.title,tx,H*.47,43*u,'#f1eee9',800,W-tx-pad,fontFamily);leftText(s.subtitle,tx,H*.57,19*u,'#c5cbcd',400,W-tx-pad,fontFamily);
   }else if(s.preset==='minimal'||s.preset==='type'){
     ctx.globalAlpha=ease;centerText(s.title,cx,H*.43,51*u,'#f0ede7',700,W*.86,fontFamily);
     centerText(s.subtitle,cx,H*.55,19*u,s.accent,450,W*.85,fontFamily);
   }else{
-    const size=Math.min(W*.33,H*.52);cover(image,cx-size/2,H*.17,size,size,s.accent);
+    const size=Math.min(W*.33,H*.52);cover(image,cx-size/2,H*.17,size,size,s.accent,s.imageScale);
     centerText(s.title,cx,H*.76,31*u,'#f2f1ed',780,W*.88,fontFamily);centerText(s.subtitle,cx,H*.83,16*u,s.accent,480,W*.86,fontFamily);
   }
   ctx.globalAlpha=1;
@@ -259,11 +268,11 @@ function drawFrame(at){if(!project||!project.scenes.length)return;const found=lo
 }
 async function uploadMedia(files){if(!files?.length)return;
   try{await persistBeforeSwitch();for(const file of files){if(file.size>750*1024*1024)throw Error(`${file.name}: 파일 최대 750 MB`);
-    const mime=file.type||({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',ogg:'audio/ogg',m4a:'audio/mp4',ttf:'font/ttf',otf:'font/otf',woff:'font/woff',woff2:'font/woff2'}[file.name.split('.').pop().toLowerCase()]);
-    if(!mime||(!mime.startsWith('audio/')&&!mime.startsWith('image/')&&!mime.startsWith('font/')&&!fontMimeTypes.has(mime)))throw Error(`지원하지 않는 파일: ${file.name}`);
+    const mime=file.type||({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',gif:'image/gif',mp4:'video/mp4',ogg:'audio/ogg',m4a:'audio/mp4',ttf:'font/ttf',otf:'font/otf',woff:'font/woff',woff2:'font/woff2'}[file.name.split('.').pop().toLowerCase()]);
+    if(!mime||(!mime.startsWith('audio/')&&!mime.startsWith('image/')&&!mime.startsWith('video/')&&!mime.startsWith('font/')&&!fontMimeTypes.has(mime)))throw Error(`지원하지 않는 파일: ${file.name}`);
     status(`업로드 중: ${file.name}`,'dirty');const url=`/api/projects/${project.id}/assets?name=${encodeURIComponent(file.name)}&mime=${encodeURIComponent(mime)}`;
     const result=await api(url,{method:'POST',headers:{'content-type':'application/octet-stream'},body:file});project=result.project;revision=project.revision;
-    const s=currentScene();if(s){s[result.asset.kind==='image'?'imageId':result.asset.kind==='audio'?'audioId':'fontAssetId']=result.asset.id;updateDirty();}
+    const s=currentScene();if(s){s[['image','video'].includes(result.asset.kind)?'imageId':result.asset.kind==='audio'?'audioId':'fontAssetId']=result.asset.id;updateDirty();}
     if(result.asset.kind==='audio')loadPeaks(result.asset.id);
     if(result.asset.kind==='font')await loadFontAsset(result.asset.id);
   }
@@ -328,6 +337,7 @@ $('addScene').addEventListener('click',()=>{const s={...structuredClone(currentS
 const drop=$('dropTarget');drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('dragover');});drop.addEventListener('dragleave',()=>drop.classList.remove('dragover'));drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('dragover');uploadMedia([...e.dataTransfer.files]);});
 $('exportBtn').addEventListener('click',openExport);$('closeExport').addEventListener('click',closeExport);$('cancelExport').addEventListener('click',closeExport);$('startExport').addEventListener('click',beginExport);
 window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveNow().catch(()=>{});return;}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'&&!e.shiftKey&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)){e.preventDefault();undo();return;}
   if(e.code==='Space'&&!['INPUT','TEXTAREA','SELECT','BUTTON'].includes(document.activeElement.tagName)){e.preventDefault();playing?stop():play();}});
 window.addEventListener('beforeunload',e=>{if(dirty||saving){e.preventDefault();e.returnValue='';}});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&dirty)saveNow().catch(()=>{});});
