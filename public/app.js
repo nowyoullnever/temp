@@ -5,7 +5,7 @@ const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const uid=()=>crypto.randomUUID().replaceAll('-','').slice(0,18);
 const seconds=n=>`${String(Math.floor(n/60)).padStart(2,'0')}:${String(Math.floor(n%60)).padStart(2,'0')}.${Math.floor((n%1)*10)}`;
 const assetUrl=id=>`/api/projects/${encodeURIComponent(project.id)}/assets/${encodeURIComponent(id)}`;
-const sceneLabels={intro:'INTRO',original:'ORIGINAL',sample:'SAMPLED',outro:'OUTRO',custom:'CUSTOM'};
+const sceneLabels={intro:'INTRO',original:'ORIGINAL',sample:'SAMPLED',compare:'COMPARE',process:'PROCESS',outro:'OUTRO',custom:'CUSTOM'};
 const presets=['type','editorial','minimal','center','split','side','record'];
 const effects=['cut','fade','slide','wipe','zoom','blur'];
 const presetLabels={type:'Type',editorial:'Editorial',minimal:'Minimal',center:'Center',split:'Split',side:'Side',record:'Record'};
@@ -66,9 +66,12 @@ function renderTimeline(){if(!project)return;$('sceneCount').textContent=`${proj
   }
 }
 function selectScene(id){if(!project.scenes.some(s=>s.id===id))return;stop();selectedId=id;playhead=previewTimeOf(id);renderTimeline();renderInspector();updateTransport();drawFrame(playhead);}
+function updateCollection(field,id,key,value){const s=currentScene(),item=s?.[field]?.find(x=>x.id===id);if(!item)return;item[key]=value;updateDirty();drawFrame(playhead);}
 function renderInspector(){const s=currentScene();if(!s)return;
   const images=project.assets.filter(a=>a.kind==='image'),audios=project.assets.filter(a=>a.kind==='audio'),fonts=project.assets.filter(a=>a.kind==='font');
   const options=(list,current,none)=>`<option value="">${none}</option>`+list.map(a=>`<option value="${esc(a.id)}" ${a.id===current?'selected':''}>${esc(a.name)}</option>`).join('');
+  const overlayEditor=(s.textOverlays||[]).map((o,i)=>`<div class="collection-card"><div class="collection-head"><strong>텍스트 ${i+1}</strong><button class="danger small-button" data-delete-overlay="${esc(o.id)}">삭제</button></div><label class="field-label">내용</label><input class="field-input" type="text" maxlength="300" data-overlay-id="${esc(o.id)}" data-overlay-field="text" value="${esc(o.text)}"/><div class="field-group field-row"><div><label class="field-label">X (0~1)</label><input class="field-input" type="number" min="0" max="1" step="0.01" data-overlay-id="${esc(o.id)}" data-overlay-field="x" value="${o.x}"/></div><div><label class="field-label">Y (0~1)</label><input class="field-input" type="number" min="0" max="1" step="0.01" data-overlay-id="${esc(o.id)}" data-overlay-field="y" value="${o.y}"/></div></div><div class="field-group field-row"><div><label class="field-label">크기</label><input class="field-input" type="number" min="8" max="240" data-overlay-id="${esc(o.id)}" data-overlay-field="size" value="${o.size}"/></div><div><label class="field-label">색상</label><input class="field-input" type="color" data-overlay-id="${esc(o.id)}" data-overlay-field="color" value="${esc(o.color)}"/></div></div><div class="field-group field-row"><div><label class="field-label">폰트 파일</label><select class="field-input" data-overlay-id="${esc(o.id)}" data-overlay-field="fontAssetId">${options(fonts,o.fontAssetId,'장면 폰트 사용')}</select></div><div><label class="field-label">정렬</label><select class="field-input" data-overlay-id="${esc(o.id)}" data-overlay-field="align">${['left','center','right'].map(a=>`<option value="${a}" ${o.align===a?'selected':''}>${a}</option>`).join('')}</select></div></div><label class="field-label">보조 폰트 스택</label><input class="field-input" type="text" maxlength="160" data-overlay-id="${esc(o.id)}" data-overlay-field="fontFamily" value="${esc(o.fontFamily)}"/></div>`).join('');
+  const processEditor=(s.processSteps||[]).map((step,i)=>`<div class="collection-card"><div class="collection-head"><strong>STEP ${i+1}</strong><button class="danger small-button" data-delete-step="${esc(step.id)}">삭제</button></div><label class="field-label">라벨</label><input class="field-input" type="text" maxlength="100" data-step-id="${esc(step.id)}" data-step-field="label" value="${esc(step.label)}"/><div class="field-group"><label class="field-label">Step 오디오</label><select class="field-input" data-step-id="${esc(step.id)}" data-step-field="audioId">${options(audios,step.audioId,'오디오 없음')}</select></div><div class="field-group field-row"><div><label class="field-label">시작 (초)</label><input class="field-input" type="number" min="0" step="0.1" data-step-id="${esc(step.id)}" data-step-field="audioStart" value="${step.audioStart}"/></div><div><label class="field-label">길이 (초)</label><input class="field-input" type="number" min="0.1" max="180" step="0.1" data-step-id="${esc(step.id)}" data-step-field="audioDuration" value="${step.audioDuration}"/></div></div></div>`).join('');
   $('inspector').innerHTML=`
     <div class="field-group"><label class="field-label">장면 유형</label><select class="field-input" data-field="type">${Object.keys(sceneLabels).map(k=>`<option value="${k}" ${s.type===k?'selected':''}>${sceneLabels[k]}</option>`).join('')}</select></div>
     <div class="field-group"><label class="field-label">제목</label><input class="field-input" type="text" maxlength="150" data-field="title" value="${esc(s.title)}"/></div>
@@ -82,6 +85,9 @@ function renderInspector(){const s=currentScene();if(!s)return;
     <div class="field-group"><label class="field-label">이 장면에서 재생할 오디오</label><select class="field-input" data-field="audioId">${options(audios,s.audioId,'오디오 없음')}</select><div class="mini-info">파형은 오디오를 지정하면 자동 분석됩니다.</div></div>
     <div class="field-group"><label class="field-label">음량 <span id="volumeVal">${Math.round(s.volume*100)}%</span></label><input class="field-input" type="range" min="0" max="1" step="0.01" data-field="volume" value="${s.volume}"/></div>
     <div class="field-group field-row"><div><label class="field-label">오디오 페이드 인 (초)</label><input class="field-input" type="number" min="0" max="5" step="0.05" data-field="audioFadeIn" value="${s.audioFadeIn||0}" /></div><div><label class="field-label">오디오 페이드 아웃 (초)</label><input class="field-input" type="number" min="0" max="5" step="0.05" data-field="audioFadeOut" value="${s.audioFadeOut||0}" /></div></div>
+    ${s.type==='compare'?`<div class="section-divider"></div><div class="inspector-section">COMPARE / 좌우 소스</div><div class="field-group field-row"><div><label class="field-label">왼쪽 이미지</label><select class="field-input" data-field="leftImageId">${options(images,s.leftImageId,'이미지 없음')}</select></div><div><label class="field-label">오른쪽 이미지</label><select class="field-input" data-field="rightImageId">${options(images,s.rightImageId,'이미지 없음')}</select></div></div><div class="field-group field-row"><div><label class="field-label">왼쪽 라벨</label><input class="field-input" type="text" maxlength="100" data-field="leftLabel" value="${esc(s.leftLabel||'ORIGINAL')}"/></div><div><label class="field-label">오른쪽 라벨</label><input class="field-input" type="text" maxlength="100" data-field="rightLabel" value="${esc(s.rightLabel||'SAMPLED')}"/></div></div><div class="field-group field-row"><div><label class="field-label">왼쪽 오디오</label><select class="field-input" data-field="leftAudioId">${options(audios,s.leftAudioId,'오디오 없음')}</select></div><div><label class="field-label">오른쪽 오디오</label><select class="field-input" data-field="rightAudioId">${options(audios,s.rightAudioId,'오디오 없음')}</select></div></div><div class="field-group field-row"><div><label class="field-label">왼쪽 시작 (초)</label><input class="field-input" type="number" min="0" step="0.1" data-field="leftAudioStart" value="${s.leftAudioStart||0}"/></div><div><label class="field-label">오른쪽 시작 (초)</label><input class="field-input" type="number" min="0" step="0.1" data-field="rightAudioStart" value="${s.rightAudioStart||0}"/></div></div>`:''}
+    ${s.type==='process'?`<div class="section-divider"></div><div class="inspector-section">PROCESS / 단계</div>${processEditor}<button class="subtle collection-add" id="addProcessStep" ${s.processSteps.length>=8?'disabled':''}>＋ Step 추가</button>`:''}
+    <div class="section-divider"></div><div class="inspector-section">TEXT OVERLAYS</div>${overlayEditor||'<div class="mini-info">기본 제목·부제목 위에 추가로 표시할 텍스트가 없습니다.</div>'}<button class="subtle collection-add" id="addTextOverlay" ${s.textOverlays.length>=32?'disabled':''}>＋ 텍스트 추가</button>
     <div class="section-divider"></div><div class="inspector-section">01 / 화면 구성</div>
     <div class="field-group"><div class="preset-grid">${presets.map(p=>`<button class="preset ${s.preset===p?'active':''}" data-preset="${p}"><span class="shape"></span><span>${presetLabels[p]}</span></button>`).join('')}</div></div>
     <div class="field-group field-row"><div><label class="field-label">배경 색상</label><input class="field-input" type="color" data-field="bg" value="${s.bg}"/></div><div><label class="field-label">강조 색상</label><input class="field-input" type="color" data-field="accent" value="${s.accent}"/></div></div>
@@ -97,6 +103,7 @@ function renderInspector(){const s=currentScene();if(!s)return;
     let value=el.type==='checkbox'?el.checked:el.type==='number'||el.type==='range'?Number(el.value):el.value;
     if(el.dataset.field==='duration')value=clamp(value||0.5,0.5,180);
     if(el.dataset.field==='audioStart')value=clamp(value||0,0,36000);
+    if(['leftAudioStart','rightAudioStart'].includes(el.dataset.field))value=clamp(value||0,0,36000);
     if(['audioFadeIn','audioFadeOut'].includes(el.dataset.field))value=clamp(value||0,0,5);
     if(el.dataset.field==='backgroundImageOpacity')value=clamp(value||0,0,1);
     mutate(el.dataset.field,value);
@@ -105,7 +112,18 @@ function renderInspector(){const s=currentScene();if(!s)return;
     if(el.dataset.field==='transitionDuration')$('transitionVal').textContent=value.toFixed(2)+'초';
     if(el.dataset.field==='audioId'&&value)loadPeaks(value);
     if(el.dataset.field==='fontAssetId'&&value)loadFontAsset(value);
+    if(el.dataset.field==='type')renderInspector();
   }));
+  $('inspector').querySelectorAll('[data-overlay-id]').forEach(el=>el.addEventListener(el.type==='color'?'input':'input',()=>{let value=el.type==='number'?Number(el.value):el.value;
+    if(['x','y'].includes(el.dataset.overlayField))value=clamp(value||0,0,1);if(el.dataset.overlayField==='size')value=clamp(value||8,8,240);updateCollection('textOverlays',el.dataset.overlayId,el.dataset.overlayField,value);if(el.dataset.overlayField==='fontAssetId'&&value)loadFontAsset(value);
+  }));
+  $('inspector').querySelectorAll('[data-step-id]').forEach(el=>el.addEventListener('input',()=>{let value=el.type==='number'?Number(el.value):el.value;
+    if(el.dataset.stepField==='audioStart')value=clamp(value||0,0,36000);if(el.dataset.stepField==='audioDuration')value=clamp(value||.1,.1,180);updateCollection('processSteps',el.dataset.stepId,el.dataset.stepField,value);if(el.dataset.stepField==='audioId'&&value)loadPeaks(value);
+  }));
+  $('inspector').querySelectorAll('[data-delete-overlay]').forEach(el=>el.addEventListener('click',()=>{s.textOverlays=s.textOverlays.filter(o=>o.id!==el.dataset.deleteOverlay);updateDirty();renderInspector();drawFrame(playhead);}));
+  $('inspector').querySelectorAll('[data-delete-step]').forEach(el=>el.addEventListener('click',()=>{s.processSteps=s.processSteps.filter(step=>step.id!==el.dataset.deleteStep);updateDirty();renderInspector();drawFrame(playhead);}));
+  $('addTextOverlay').onclick=()=>{s.textOverlays.push({id:uid(),text:'TEXT',x:.5,y:.5,size:32,color:'#f5f4ed',fontAssetId:null,fontFamily:s.fontFamily||'Inter, Segoe UI, Arial, sans-serif',align:'center'});updateDirty();renderInspector();drawFrame(playhead);};
+  const addStep=$('addProcessStep');if(addStep)addStep.onclick=()=>{s.processSteps.push({id:uid(),label:`STEP ${s.processSteps.length+1}`,audioId:null,audioStart:0,audioDuration:2});updateDirty();renderInspector();drawFrame(playhead);};
   $('inspector').querySelectorAll('[data-preset]').forEach(el=>el.addEventListener('click',()=>{mutate('preset',el.dataset.preset);renderInspector();}));
   $('inspector').querySelectorAll('[data-effect]').forEach(el=>el.addEventListener('click',()=>{mutate('transition',el.dataset.effect);renderInspector();}));
   $('duplicateScene').onclick=()=>{
@@ -146,7 +164,7 @@ async function loadFontAsset(assetId){
 function fontFamilyFor(scene){const fallback=scene?.fontFamily||'Inter, Segoe UI, Arial, sans-serif',assetId=scene?.fontAssetId,record=fontCache.get(assetId);
   if(assetId&&!record?.loaded)loadFontAsset(assetId);return record?.loaded?`${record.family}, ${fallback}`:fallback;
 }
-async function ensureProjectFonts(){const ids=[...new Set(project.scenes.map(s=>s.fontAssetId).filter(Boolean))],families=await Promise.all(ids.map(loadFontAsset));if(families.some(f=>!f))throw Error('선택한 커스텀 폰트를 로드할 수 없습니다. 폰트 파일을 확인하세요.');}
+async function ensureProjectFonts(){const ids=[...new Set(project.scenes.flatMap(s=>[s.fontAssetId,...(s.textOverlays||[]).map(o=>o.fontAssetId)]).filter(Boolean))],families=await Promise.all(ids.map(loadFontAsset));if(families.some(f=>!f))throw Error('선택한 커스텀 폰트를 로드할 수 없습니다. 폰트 파일을 확인하세요.');}
 async function loadPeaks(id){if(!id||peakCache.has(id)||pendingPeaks.has(id))return;pendingPeaks.add(id);
   try{const response=await fetch(assetUrl(id));if(!response.ok)throw Error('미디어 접근 오류');const data=await response.arrayBuffer();
     const AC=window.AudioContext||window.webkitAudioContext;const temp=new AC();const audioBuf=await temp.decodeAudioData(data);await temp.close();
@@ -175,13 +193,24 @@ function waveform(s,x,y,w,h,progress,accent){if(!s.audioId)return;loadPeaks(s.au
   }
   fill('#e3e8df',x+w*clamp(progress,0,1)-1,y+2,2,h-4);
   ctx.restore();}
+function renderTextOverlays(s,W,H){for(const overlay of s.textOverlays||[]){if(!overlay.text)continue;ctx.save();ctx.textAlign=overlay.align||'center';ctx.textBaseline='middle';ctx.font=`600 ${clamp(overlay.size||32,8,240)}px ${fontFamilyFor(overlay)}`;ctx.fillStyle=overlay.color||'#f5f4ed';ctx.fillText(overlay.text,clamp(overlay.x??.5,0,1)*W,clamp(overlay.y??.5,0,1)*H,W*.92);ctx.restore();}}
 function renderScene(s,t){const W=stage.width,H=stage.height,cx=W/2,sy=W/960,land=W>H;
   const u=land?W/960:W/630,fontFamily=fontFamilyFor(s);ctx.save();fill(s.bg,0,0,W,H);
   const bgImage=imageFor(s.backgroundImageId);if(bgImage?.complete&&bgImage.naturalWidth){ctx.save();ctx.globalAlpha=clamp(s.backgroundImageOpacity??.22,0,1);const scale=(s.backgroundImageFit==='contain'?Math.min:Math.max)(W/bgImage.width,H/bgImage.height),dw=bgImage.width*scale,dh=bgImage.height*scale;ctx.drawImage(bgImage,(W-dw)/2,(H-dh)/2,dw,dh);ctx.restore();}
   const grad=ctx.createRadialGradient(W*.62,H*.42,0,W*.62,H*.42,Math.max(W,H)*.75);grad.addColorStop(0,rgba(s.accent,.12));grad.addColorStop(1,'#00000000');fill(grad,0,0,W,H);
   const pad=W*.06;leftText('001  /  SOURCE STUDY',pad,H*.93,9*u,'#879096',700,Infinity,fontFamily);
   const startEffect=clamp(t/.58,0,1),ease=1-Math.pow(1-startEffect,3);const image=imageFor(s.imageId);
-  if(s.type==='intro'){
+  if(s.type==='compare'){
+    const size=Math.min(W*.35,H*.47),gap=W*.07,leftX=cx-gap/2-size,rightX=cx+gap/2;
+    cover(imageFor(s.leftImageId),leftX,H*.22,size,size,s.accent);cover(imageFor(s.rightImageId),rightX,H*.22,size,size,s.accent);
+    centerText(s.leftLabel||'ORIGINAL',leftX+size/2,H*.17,13*u,'#d3e2d7',750,size,fontFamily);centerText(s.rightLabel||'SAMPLED',rightX+size/2,H*.17,13*u,'#ead7c7',750,size,fontFamily);
+    centerText(s.title,cx,H*.78,34*u,'#f2f1ee',780,W*.88,fontFamily);centerText(s.subtitle,cx,H*.85,16*u,s.accent,480,W*.86,fontFamily);
+  }else if(s.type==='process'){
+    centerText('PROCESS',cx,H*.14,16*u,s.accent,800,W*.85,fontFamily);centerText(s.title,cx,H*.22,30*u,'#f2f1ee',760,W*.85,fontFamily);
+    const steps=(s.processSteps||[]).slice(0,8),cols=Math.min(4,Math.max(1,steps.length)),rows=Math.ceil(steps.length/cols),gap=W*.022,boxW=Math.min(W*.76,(W*.82-(cols-1)*gap)/cols),boxH=Math.min(H*.18,(H*.39-(rows-1)*gap)/Math.max(1,rows)),gridW=cols*boxW+(cols-1)*gap,startX=cx-gridW/2,startY=H*.34;
+    let elapsed=0;for(let i=0;i<steps.length;i++){const step=steps[i],active=t>=elapsed&&t<elapsed+step.audioDuration;elapsed+=step.audioDuration;const col=i%cols,row=Math.floor(i/cols),x=startX+col*(boxW+gap),y=startY+row*(boxH+gap);roundRect(x,y,boxW,boxH,8,active?rgba(s.accent,.9):'#10151bcf');ctx.strokeStyle=active?s.accent:'#53606a';ctx.lineWidth=active?3:1;ctx.strokeRect(x,y,boxW,boxH);centerText(String(i+1).padStart(2,'0'),x+boxW*.13,y+boxH*.28,11*u,active?'#17201c':'#8c9ba2',800,boxW*.2,fontFamily);centerText(step.label||`STEP ${i+1}`,x+boxW*.5,y+boxH*.58,14*u,active?'#15201b':'#eff0ee',700,boxW*.78,fontFamily);}
+    centerText(s.subtitle,cx,H*.87,15*u,s.accent,480,W*.86,fontFamily);
+  }else if(s.type==='intro'){
     ctx.globalAlpha=.5+.5*ease;
     if(s.preset==='record'){cover(image,cx-W*.17,H*.22,W*.34,Math.min(W*.34,H*.45),s.accent);centerText(s.title,cx,H*.76,38*u,'#f5f1e9',750,W*.9,fontFamily);}
     else if(s.preset==='editorial'){
@@ -213,6 +242,7 @@ function renderScene(s,t){const W=stage.width,H=stage.height,cx=W/2,sy=W/960,lan
   }
   ctx.globalAlpha=1;
   if(s.showWaveform && s.audioId){const w=W*.66;roundRect(cx-w/2,H*.86-H*.035,w,H*.082,4,'#0000004a');waveform(s,cx-w*.46,H*.858,w*.92,H*.064,clamp(t/s.duration,0,1),s.accent);}
+  renderTextOverlays(s,W,H);
   ctx.restore();
 }
 function drawFrame(at){if(!project||!project.scenes.length)return;const found=locate(clamp(at,0,totalTime()));if(!found)return;

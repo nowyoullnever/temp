@@ -49,12 +49,12 @@ async function loadProject(id){
   }
 }
 function makeDefault(name='Untitled Breakdown'){
-  const ids=Array.from({length:4},()=>newId());return {version:1,id:newId(),name:String(name).slice(0,100),format:'16:9',createdAt:now(),updatedAt:now(),revision:0,assets:[],scenes:[
+  const ids=Array.from({length:4},()=>newId());return withSceneDefaults({version:1,id:newId(),name:String(name).slice(0,100),format:'16:9',createdAt:now(),updatedAt:now(),revision:0,assets:[],scenes:[
     {id:ids[0],type:'intro',title:'SAMPLE BREAKDOWN',subtitle:'VOL. 001',duration:2.5,preset:'type',transition:'cut',transitionDuration:0.5,bg:'#13151b',accent:'#dfddcf',imageId:null,backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif',audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:false},
     {id:ids[1],type:'original',title:'ORIGINAL SAMPLE',subtitle:'Artist · Track',duration:8,preset:'center',transition:'fade',transitionDuration:0.5,bg:'#171b21',accent:'#a3c6b7',imageId:null,backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif',audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:true},
     {id:ids[2],type:'sample',title:'THE FLIP',subtitle:'Your track',duration:8,preset:'split',transition:'wipe',transitionDuration:0.45,bg:'#181820',accent:'#d9bba5',imageId:null,backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif',audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:true},
     {id:ids[3],type:'outro',title:'END OF BREAKDOWN',subtitle:'Thank you for listening',duration:2.5,preset:'minimal',transition:'fade',transitionDuration:0.5,bg:'#13151b',accent:'#dfddcf',imageId:null,backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif',audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:false}
-  ]};
+  ]});
 }
 function validateProject(input,expectedId){
   if(!input||typeof input!=='object'||!Array.isArray(input.scenes)||!Array.isArray(input.assets))throw fail(400,'프로젝트 형식이 올바르지 않습니다.');
@@ -64,7 +64,9 @@ function validateProject(input,expectedId){
   const assets=input.assets.map(a=>({id:str(a.id,60),name:str(a.name,180),kind:['image','audio','font'].includes(a.kind)?a.kind:'audio',mime:str(a.mime,90),path:str(a.path,220),size:bounded(a.size,0,MEDIA_LIMIT,0)}));
   const set=new Set();for(const a of assets){if(!safeId(a.id)||set.has(a.id)||!/^media\/[a-zA-Z0-9._-]+$/.test(a.path))throw fail(400,'에셋 경로 또는 ID가 올바르지 않습니다.');set.add(a.id);}
   const assetById=new Map(assets.map(a=>[a.id,a]));
-  const scenes=input.scenes.map(s=>({id:safeId(s.id)?s.id:newId(),type:['intro','original','sample','outro','custom'].includes(s.type)?s.type:'custom',
+  const overlays=(items,assetById)=>Array.isArray(items)?items.slice(0,32).map(o=>({id:safeId(o?.id)?o.id:newId(),text:str(o?.text,300),x:bounded(o?.x,0,1,.5),y:bounded(o?.y,0,1,.5),size:bounded(o?.size,8,240,32),color:/^#[0-9a-fA-F]{6}$/.test(o?.color)?o.color:'#f5f4ed',fontAssetId:assetById.get(o?.fontAssetId)?.kind==='font'?o.fontAssetId:null,fontFamily:str(o?.fontFamily,160)||'Inter, Segoe UI, Arial, sans-serif',align:['left','center','right'].includes(o?.align)?o.align:'center'})):[];
+  const steps=(items,assetById)=>Array.isArray(items)?items.slice(0,8).map(step=>({id:safeId(step?.id)?step.id:newId(),label:str(step?.label,100),audioId:assetById.get(step?.audioId)?.kind==='audio'?step.audioId:null,audioStart:bounded(step?.audioStart,0,36000,0),audioDuration:bounded(step?.audioDuration,.1,180,2)})):[];
+  const scenes=input.scenes.map(s=>({id:safeId(s.id)?s.id:newId(),type:['intro','original','sample','outro','compare','process','custom'].includes(s.type)?s.type:'custom',
     title:str(s.title,150),subtitle:str(s.subtitle,250),duration:bounded(s.duration,0.5,180,5),
     preset:['type','editorial','minimal','center','split','side','record'].includes(s.preset)?s.preset:'center',
     transition:['cut','fade','slide','wipe','zoom','blur'].includes(s.transition)?s.transition:'fade',
@@ -74,6 +76,9 @@ function validateProject(input,expectedId){
     backgroundImageOpacity:bounded(s.backgroundImageOpacity,0,1,0.22),backgroundImageFit:['cover','contain'].includes(s.backgroundImageFit)?s.backgroundImageFit:'cover',
     fontAssetId:assetById.get(s.fontAssetId)?.kind==='font'?s.fontAssetId:null,fontFamily:str(s.fontFamily,160)||'Inter, Segoe UI, Arial, sans-serif',
     audioId:assetById.get(s.audioId)?.kind==='audio'?s.audioId:null,
+    leftImageId:assetById.get(s.leftImageId)?.kind==='image'?s.leftImageId:null,rightImageId:assetById.get(s.rightImageId)?.kind==='image'?s.rightImageId:null,
+    leftLabel:str(s.leftLabel,100)||'ORIGINAL',rightLabel:str(s.rightLabel,100)||'SAMPLED',leftAudioId:assetById.get(s.leftAudioId)?.kind==='audio'?s.leftAudioId:null,rightAudioId:assetById.get(s.rightAudioId)?.kind==='audio'?s.rightAudioId:null,leftAudioStart:bounded(s.leftAudioStart,0,36000,0),rightAudioStart:bounded(s.rightAudioStart,0,36000,0),
+    textOverlays:overlays(s.textOverlays,assetById),processSteps:steps(s.processSteps,assetById),
     audioStart:bounded(s.audioStart,0,36000,0),volume:bounded(s.volume,0,1,1),audioFadeIn:bounded(s.audioFadeIn,0,5,0),audioFadeOut:bounded(s.audioFadeOut,0,5,0),showWaveform:!!s.showWaveform}));
   if(new Set(scenes.map(s=>s.id)).size!==scenes.length)throw fail(400,'장면 ID가 중복됩니다.');
   return {version:1,id:expectedId,name:str(input.name,100)||'Untitled Breakdown',format:input.format==='9:16'?'9:16':'16:9',createdAt:str(input.createdAt,40)||now(),updatedAt:now(),revision:bounded(input.revision,0,100000000,0),assets,scenes};
@@ -86,6 +91,16 @@ function withSceneDefaults(project){
     if(!Object.hasOwn(scene,'backgroundImageFit'))scene.backgroundImageFit='cover';
     if(!Object.hasOwn(scene,'fontAssetId'))scene.fontAssetId=null;
     if(!Object.hasOwn(scene,'fontFamily'))scene.fontFamily='Inter, Segoe UI, Arial, sans-serif';
+    if(!Object.hasOwn(scene,'leftImageId'))scene.leftImageId=null;
+    if(!Object.hasOwn(scene,'rightImageId'))scene.rightImageId=null;
+    if(!Object.hasOwn(scene,'leftLabel'))scene.leftLabel='ORIGINAL';
+    if(!Object.hasOwn(scene,'rightLabel'))scene.rightLabel='SAMPLED';
+    if(!Object.hasOwn(scene,'leftAudioId'))scene.leftAudioId=null;
+    if(!Object.hasOwn(scene,'rightAudioId'))scene.rightAudioId=null;
+    if(!Object.hasOwn(scene,'leftAudioStart'))scene.leftAudioStart=0;
+    if(!Object.hasOwn(scene,'rightAudioStart'))scene.rightAudioStart=0;
+    if(!Array.isArray(scene.textOverlays))scene.textOverlays=[];
+    if(!Array.isArray(scene.processSteps))scene.processSteps=[];
   }
   return project;
 }
