@@ -74,10 +74,10 @@ function validateProject(input,expectedId){
     transitionDuration:bounded(s.transitionDuration,0.1,1.5,0.5),
     bg:/^#[0-9a-fA-F]{6}$/.test(s.bg)?s.bg:'#171b21',accent:/^#[0-9a-fA-F]{6}$/.test(s.accent)?s.accent:'#dfddcf',
     imageId:visual(s.imageId)?s.imageId:null,backgroundImageId:visual(s.backgroundImageId)?s.backgroundImageId:null,
-    backgroundImageOpacity:bounded(s.backgroundImageOpacity,0,1,0.22),backgroundImageFit:['cover','contain'].includes(s.backgroundImageFit)?s.backgroundImageFit:'cover',backgroundImageScale:bounded(s.backgroundImageScale,.25,3,1),imageScale:bounded(s.imageScale,.25,3,1),
+    backgroundImageOpacity:bounded(s.backgroundImageOpacity,0,1,0.22),backgroundImageFit:['cover','contain'].includes(s.backgroundImageFit)?s.backgroundImageFit:'cover',backgroundImageScale:bounded(s.backgroundImageScale,.25,3,1),backgroundImageOffsetX:bounded(s.backgroundImageOffsetX,-1,1,0),backgroundImageOffsetY:bounded(s.backgroundImageOffsetY,-1,1,0),imageScale:bounded(s.imageScale,.25,3,1),imageOffsetX:bounded(s.imageOffsetX,-1,1,0),imageOffsetY:bounded(s.imageOffsetY,-1,1,0),
     fontAssetId:assetById.get(s.fontAssetId)?.kind==='font'?s.fontAssetId:null,fontFamily:str(s.fontFamily,160)||'Inter, Segoe UI, Arial, sans-serif',
     audioId:assetById.get(s.audioId)?.kind==='audio'?s.audioId:null,
-    leftImageId:visual(s.leftImageId)?s.leftImageId:null,rightImageId:visual(s.rightImageId)?s.rightImageId:null,leftMediaScale:bounded(s.leftMediaScale,.25,3,1),rightMediaScale:bounded(s.rightMediaScale,.25,3,1),
+    leftImageId:visual(s.leftImageId)?s.leftImageId:null,rightImageId:visual(s.rightImageId)?s.rightImageId:null,leftMediaScale:bounded(s.leftMediaScale,.25,3,1),rightMediaScale:bounded(s.rightMediaScale,.25,3,1),leftImageOffsetX:bounded(s.leftImageOffsetX,-1,1,0),leftImageOffsetY:bounded(s.leftImageOffsetY,-1,1,0),rightImageOffsetX:bounded(s.rightImageOffsetX,-1,1,0),rightImageOffsetY:bounded(s.rightImageOffsetY,-1,1,0),
     leftLabel:str(s.leftLabel,100)||'ORIGINAL',rightLabel:str(s.rightLabel,100)||'SAMPLED',leftAudioId:assetById.get(s.leftAudioId)?.kind==='audio'?s.leftAudioId:null,rightAudioId:assetById.get(s.rightAudioId)?.kind==='audio'?s.rightAudioId:null,leftAudioStart:bounded(s.leftAudioStart,0,36000,0),rightAudioStart:bounded(s.rightAudioStart,0,36000,0),
     textOverlays:overlays(s.textOverlays,assetById),processSteps:steps(s.processSteps,assetById),
     audioStart:bounded(s.audioStart,0,36000,0),volume:bounded(s.volume,0,1,1),audioFadeIn:bounded(s.audioFadeIn,0,5,0),audioFadeOut:bounded(s.audioFadeOut,0,5,0),showWaveform:!!s.showWaveform}));
@@ -91,13 +91,21 @@ function withSceneDefaults(project){
     if(!Object.hasOwn(scene,'backgroundImageOpacity'))scene.backgroundImageOpacity=0.22;
     if(!Object.hasOwn(scene,'backgroundImageFit'))scene.backgroundImageFit='cover';
     if(!Object.hasOwn(scene,'backgroundImageScale'))scene.backgroundImageScale=1;
+    if(!Object.hasOwn(scene,'backgroundImageOffsetX'))scene.backgroundImageOffsetX=0;
+    if(!Object.hasOwn(scene,'backgroundImageOffsetY'))scene.backgroundImageOffsetY=0;
     if(!Object.hasOwn(scene,'imageScale'))scene.imageScale=1;
+    if(!Object.hasOwn(scene,'imageOffsetX'))scene.imageOffsetX=0;
+    if(!Object.hasOwn(scene,'imageOffsetY'))scene.imageOffsetY=0;
     if(!Object.hasOwn(scene,'fontAssetId'))scene.fontAssetId=null;
     if(!Object.hasOwn(scene,'fontFamily'))scene.fontFamily='Inter, Segoe UI, Arial, sans-serif';
     if(!Object.hasOwn(scene,'leftImageId'))scene.leftImageId=null;
     if(!Object.hasOwn(scene,'rightImageId'))scene.rightImageId=null;
     if(!Object.hasOwn(scene,'leftMediaScale'))scene.leftMediaScale=1;
     if(!Object.hasOwn(scene,'rightMediaScale'))scene.rightMediaScale=1;
+    if(!Object.hasOwn(scene,'leftImageOffsetX'))scene.leftImageOffsetX=0;
+    if(!Object.hasOwn(scene,'leftImageOffsetY'))scene.leftImageOffsetY=0;
+    if(!Object.hasOwn(scene,'rightImageOffsetX'))scene.rightImageOffsetX=0;
+    if(!Object.hasOwn(scene,'rightImageOffsetY'))scene.rightImageOffsetY=0;
     if(!Object.hasOwn(scene,'leftLabel'))scene.leftLabel='ORIGINAL';
     if(!Object.hasOwn(scene,'rightLabel'))scene.rightLabel='SAMPLED';
     if(!Object.hasOwn(scene,'leftAudioId'))scene.leftAudioId=null;
