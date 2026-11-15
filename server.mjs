@@ -28,12 +28,12 @@ async function exists(file){try{await fsp.access(file);return true;}catch{return
 async function writeAtomic(file,data){await fsp.mkdir(path.dirname(file),{recursive:true});const temp=file+'.'+newId()+'.tmp';let fh;
   try{fh=await fsp.open(temp,'wx');await fh.writeFile(data);await fh.sync();await fh.close();fh=null;await fsp.rename(temp,file);
     // Sync the directory metadata where supported. Windows sometimes refuses directory handles.
-    try{const dh=await fsp.open(path.dirname(file),'r');await dh.sync();await dh.close();}catch{}
+    let dh;try{dh=await fsp.open(path.dirname(file),'r');await dh.sync();}catch{}finally{if(dh)await dh.close().catch(()=>{});}
   }finally{if(fh)await fh.close().catch(()=>{});await fsp.rm(temp,{force:true}).catch(()=>{});}
 }
 async function loadProject(id){
   if(!safeId(id))throw fail(400,'잘못된 프로젝트 ID');
-  try {const p=JSON.parse(await fsp.readFile(jsonPath(id),'utf8'));if(p.id!==id)throw Error('ID mismatch');return p;}
+  try {const p=JSON.parse(await fsp.readFile(jsonPath(id),'utf8'));if(p.id!==id)throw Error('ID mismatch');return withSceneDefaults(p);}
   catch(e){
     // The canonical JSON is atomically replaced, but if it was manually damaged or
     // disappeared after a crash, recover a valid recent snapshot without touching media.
@@ -41,8 +41,8 @@ async function loadProject(id){
     const files=(await fsp.readdir(backupDir).catch(()=>[])).filter(n=>/^\d{4}-.*\.json$/.test(n)).sort().reverse();
     for(const name of files){try{const p=JSON.parse(await fsp.readFile(path.join(backupDir,name),'utf8'));
       if(p.id!==id || !Array.isArray(p.scenes) || !Array.isArray(p.assets))continue;
-      await writeAtomic(jsonPath(id),JSON.stringify(p,null,2));
-      console.warn(`Recovered ${id} from ${name}`);return p;
+       await writeAtomic(jsonPath(id),JSON.stringify(p,null,2));
+       console.warn(`Recovered ${id} from ${name}`);return withSceneDefaults(p);
     }catch{}}
     if(e.code==='ENOENT')throw fail(404,'프로젝트가 없습니다. 자동 복구할 백업도 없습니다.');
     throw fail(500,'프로젝트 파일을 읽을 수 없고 복구 가능한 백업도 없습니다.');
@@ -50,10 +50,10 @@ async function loadProject(id){
 }
 function makeDefault(name='Untitled Breakdown'){
   const ids=Array.from({length:4},()=>newId());return {version:1,id:newId(),name:String(name).slice(0,100),format:'16:9',createdAt:now(),updatedAt:now(),revision:0,assets:[],scenes:[
-    {id:ids[0],type:'intro',title:'SAMPLE BREAKDOWN',subtitle:'VOL. 001',duration:2.5,preset:'type',transition:'cut',transitionDuration:0.5,bg:'#13151b',accent:'#dfddcf',imageId:null,audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:false},
-    {id:ids[1],type:'original',title:'ORIGINAL SAMPLE',subtitle:'Artist · Track',duration:8,preset:'center',transition:'fade',transitionDuration:0.5,bg:'#171b21',accent:'#a3c6b7',imageId:null,audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:true},
-    {id:ids[2],type:'sample',title:'THE FLIP',subtitle:'Your track',duration:8,preset:'split',transition:'wipe',transitionDuration:0.45,bg:'#181820',accent:'#d9bba5',imageId:null,audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:true},
-    {id:ids[3],type:'outro',title:'END OF BREAKDOWN',subtitle:'Thank you for listening',duration:2.5,preset:'minimal',transition:'fade',transitionDuration:0.5,bg:'#13151b',accent:'#dfddcf',imageId:null,audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:false}
+    {id:ids[0],type:'intro',title:'SAMPLE BREAKDOWN',subtitle:'VOL. 001',duration:2.5,preset:'type',transition:'cut',transitionDuration:0.5,bg:'#13151b',accent:'#dfddcf',imageId:null,backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif',audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:false},
+    {id:ids[1],type:'original',title:'ORIGINAL SAMPLE',subtitle:'Artist · Track',duration:8,preset:'center',transition:'fade',transitionDuration:0.5,bg:'#171b21',accent:'#a3c6b7',imageId:null,backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif',audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:true},
+    {id:ids[2],type:'sample',title:'THE FLIP',subtitle:'Your track',duration:8,preset:'split',transition:'wipe',transitionDuration:0.45,bg:'#181820',accent:'#d9bba5',imageId:null,backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif',audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:true},
+    {id:ids[3],type:'outro',title:'END OF BREAKDOWN',subtitle:'Thank you for listening',duration:2.5,preset:'minimal',transition:'fade',transitionDuration:0.5,bg:'#13151b',accent:'#dfddcf',imageId:null,backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif',audioId:null,audioStart:0,volume:1,audioFadeIn:0.15,audioFadeOut:0.2,showWaveform:false}
   ]};
 }
 function validateProject(input,expectedId){
@@ -61,18 +61,33 @@ function validateProject(input,expectedId){
   if(input.scenes.length<1||input.scenes.length>100||input.assets.length>500)throw fail(400,'장면 또는 에셋 개수 제한 초과');
   const str=(x,max=200)=>typeof x==='string'?x.slice(0,max):'';
   const bounded=(n,min,max,def)=>Number.isFinite(Number(n))?Math.min(max,Math.max(min,Number(n))):def;
-  const assets=input.assets.map(a=>({id:str(a.id,60),name:str(a.name,180),kind:a.kind==='image'?'image':'audio',mime:str(a.mime,90),path:str(a.path,220),size:bounded(a.size,0,MEDIA_LIMIT,0)}));
+  const assets=input.assets.map(a=>({id:str(a.id,60),name:str(a.name,180),kind:['image','audio','font'].includes(a.kind)?a.kind:'audio',mime:str(a.mime,90),path:str(a.path,220),size:bounded(a.size,0,MEDIA_LIMIT,0)}));
   const set=new Set();for(const a of assets){if(!safeId(a.id)||set.has(a.id)||!/^media\/[a-zA-Z0-9._-]+$/.test(a.path))throw fail(400,'에셋 경로 또는 ID가 올바르지 않습니다.');set.add(a.id);}
+  const assetById=new Map(assets.map(a=>[a.id,a]));
   const scenes=input.scenes.map(s=>({id:safeId(s.id)?s.id:newId(),type:['intro','original','sample','outro','custom'].includes(s.type)?s.type:'custom',
     title:str(s.title,150),subtitle:str(s.subtitle,250),duration:bounded(s.duration,0.5,180,5),
     preset:['type','editorial','minimal','center','split','side','record'].includes(s.preset)?s.preset:'center',
     transition:['cut','fade','slide','wipe','zoom','blur'].includes(s.transition)?s.transition:'fade',
     transitionDuration:bounded(s.transitionDuration,0.1,1.5,0.5),
     bg:/^#[0-9a-fA-F]{6}$/.test(s.bg)?s.bg:'#171b21',accent:/^#[0-9a-fA-F]{6}$/.test(s.accent)?s.accent:'#dfddcf',
-    imageId:set.has(s.imageId)?s.imageId:null,audioId:set.has(s.audioId)?s.audioId:null,
+    imageId:assetById.get(s.imageId)?.kind==='image'?s.imageId:null,backgroundImageId:assetById.get(s.backgroundImageId)?.kind==='image'?s.backgroundImageId:null,
+    backgroundImageOpacity:bounded(s.backgroundImageOpacity,0,1,0.22),backgroundImageFit:['cover','contain'].includes(s.backgroundImageFit)?s.backgroundImageFit:'cover',
+    fontAssetId:assetById.get(s.fontAssetId)?.kind==='font'?s.fontAssetId:null,fontFamily:str(s.fontFamily,160)||'Inter, Segoe UI, Arial, sans-serif',
+    audioId:assetById.get(s.audioId)?.kind==='audio'?s.audioId:null,
     audioStart:bounded(s.audioStart,0,36000,0),volume:bounded(s.volume,0,1,1),audioFadeIn:bounded(s.audioFadeIn,0,5,0),audioFadeOut:bounded(s.audioFadeOut,0,5,0),showWaveform:!!s.showWaveform}));
   if(new Set(scenes.map(s=>s.id)).size!==scenes.length)throw fail(400,'장면 ID가 중복됩니다.');
   return {version:1,id:expectedId,name:str(input.name,100)||'Untitled Breakdown',format:input.format==='9:16'?'9:16':'16:9',createdAt:str(input.createdAt,40)||now(),updatedAt:now(),revision:bounded(input.revision,0,100000000,0),assets,scenes};
+}
+function withSceneDefaults(project){
+  // Reading old v0.1 JSON must be non-destructive, while exposing v0.2 defaults immediately.
+  for(const scene of project.scenes||[]){
+    if(!Object.hasOwn(scene,'backgroundImageId'))scene.backgroundImageId=null;
+    if(!Object.hasOwn(scene,'backgroundImageOpacity'))scene.backgroundImageOpacity=0.22;
+    if(!Object.hasOwn(scene,'backgroundImageFit'))scene.backgroundImageFit='cover';
+    if(!Object.hasOwn(scene,'fontAssetId'))scene.fontAssetId=null;
+    if(!Object.hasOwn(scene,'fontFamily'))scene.fontFamily='Inter, Segoe UI, Arial, sans-serif';
+  }
+  return project;
 }
 const lastBackup=new Map();
 async function backupSnapshot(id,p,{force=false}={}){
@@ -96,7 +111,7 @@ async function persist(id, next, {forceBackup=false}={}){
 }
 async function parseJSON(req,limit=JSON_LIMIT){const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)throw fail(413,'요청 용량 제한 초과');chunks.push(chunk);}try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw fail(400,'JSON 파싱 실패');}}
 async function streamToFile(req,target,limit){const f=await fsp.open(target,'wx');let size=0;try{for await(const chunk of req){size+=chunk.length;if(size>limit)throw fail(413,'미디어 파일 크기 제한 초과');await f.write(chunk);}await f.sync();return size;}finally{await f.close();if(size>limit)await fsp.rm(target,{force:true}).catch(()=>{});}}
-function contentType(mime){const good=['audio/mpeg','audio/mp3','audio/wav','audio/x-wav','audio/wave','audio/ogg','audio/mp4','audio/flac','audio/x-flac','image/jpeg','image/png','image/webp','image/gif'];return good.includes(mime)?mime:'application/octet-stream';}
+function contentType(mime){const good=['audio/mpeg','audio/mp3','audio/wav','audio/x-wav','audio/wave','audio/ogg','audio/mp4','audio/flac','audio/x-flac','image/jpeg','image/png','image/webp','image/gif','font/ttf','font/otf','font/woff','font/woff2','application/font-sfnt','application/x-font-ttf','application/x-font-otf','application/font-woff','application/font-woff2'];return good.includes(mime)?mime:'application/octet-stream';}
 async function serveMedia(req,res,id,assetId){const p=await loadProject(id);const a=p.assets.find(a=>a.id===assetId);if(!a)throw fail(404,'파일이 없습니다.');
   const file=path.join(projDir(id),a.path);const stat=await fsp.stat(file).catch(()=>null);if(!stat)throw fail(404,'원본 파일이 없어졌습니다.');
   const mime=contentType(a.mime);let start=0,end=stat.size-1,status=200;const range=req.headers.range;
@@ -169,10 +184,10 @@ async function request(req,res){
   }
   if(seg[3]==='assets'&&seg.length===4&&req.method==='POST'){
     return await serialized(id,async()=>{
-      const mime=(u.searchParams.get('mime')||'').slice(0,90),kind=mime.startsWith('image/')?'image':mime.startsWith('audio/')?'audio':null;
-      if(!kind||contentType(mime)==='application/octet-stream')throw fail(415,'지원하지 않는 오디오/이미지 형식입니다.');
+      const mime=(u.searchParams.get('mime')||'').slice(0,90),kind=mime.startsWith('image/')?'image':mime.startsWith('audio/')?'audio':(mime.startsWith('font/')||['application/font-sfnt','application/x-font-ttf','application/x-font-otf','application/font-woff','application/font-woff2'].includes(mime))?'font':null;
+      if(!kind||contentType(mime)==='application/octet-stream')throw fail(415,'지원하지 않는 오디오/이미지/폰트 형식입니다.');
       const name=(u.searchParams.get('name')||'media').replace(/[\\/\0\r\n]/g,'_').slice(0,130);
-      const aid=newId(),extension=path.extname(name).replace(/[^.a-zA-Z0-9]/g,'').slice(0,10)|| (kind==='image'?'.png':'.wav');
+      const aid=newId(),extension=path.extname(name).replace(/[^.a-zA-Z0-9]/g,'').slice(0,10)|| (kind==='image'?'.png':kind==='font'?'.woff2':'.wav');
       const rel=`media/${aid}${extension}`;const full=path.join(projDir(id),rel);await fsp.mkdir(path.dirname(full),{recursive:true});
       let bytes=0;try{bytes=await streamToFile(req,full,MEDIA_LIMIT);}catch(e){await fsp.rm(full,{force:true});throw e;}
       if(!bytes){await fsp.rm(full,{force:true});throw fail(400,'빈 파일입니다.');}

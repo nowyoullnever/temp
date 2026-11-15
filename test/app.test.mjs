@@ -37,24 +37,34 @@ test('Local server: creates, persists, locks revisions, backs up, handles media 
     assert.ok(ok,'Server failed to start: '+err);
     let out=await request('/api/projects','POST',JSON.stringify({name:'Test Session'}),{'content-type':'application/json'});assert.equal(out.status,201);
     let p=out.data.project;const id=p.id;assert.equal(p.scenes.length,4);
+    assert.deepEqual(Object.fromEntries(['backgroundImageId','backgroundImageOpacity','backgroundImageFit','fontAssetId','fontFamily'].map(k=>[k,p.scenes[0][k]])),{backgroundImageId:null,backgroundImageOpacity:0.22,backgroundImageFit:'cover',fontAssetId:null,fontFamily:'Inter, Segoe UI, Arial, sans-serif'});
     p.scenes[0].title='Intro survives restart';
     out=await request(`/api/projects/${id}/save`,'PUT',JSON.stringify(p),{'content-type':'application/json'});assert.equal(out.status,200);p=out.data.project;assert.equal(p.revision,1);
     out=await request(`/api/projects/${id}/save`,'PUT',JSON.stringify({...p,revision:0}),{'content-type':'application/json'});assert.equal(out.status,409);
     out=await request(`/api/projects/${id}/assets?name=original.wav&mime=audio%2Fwav`,'POST',wav(),{'content-type':'application/octet-stream'});assert.equal(out.status,201);p=out.data.project;
-    const asset=out.data.asset;assert.equal(asset.kind,'audio');p.scenes[1].audioId=asset.id;p.scenes[1].audioStart=0.3;
+    const asset=out.data.asset;assert.equal(asset.kind,'audio');
+    const png=Buffer.from('89504e470d0a1a0a','hex');out=await request(`/api/projects/${id}/assets?name=background.png&mime=image%2Fpng`,'POST',png,{'content-type':'application/octet-stream'});assert.equal(out.status,201);const background=out.data.asset;assert.equal(background.kind,'image');p=out.data.project;
+    const fontBytes=Buffer.from('wOFFtest');let font;
+    for(const [name,mime] of [['display.ttf','font/ttf'],['display.otf','font/otf'],['display.woff','font/woff'],['display.woff2','font/woff2']]){out=await request(`/api/projects/${id}/assets?name=${name}&mime=${encodeURIComponent(mime)}`,'POST',fontBytes,{'content-type':'application/octet-stream'});assert.equal(out.status,201);assert.equal(out.data.asset.kind,'font');font=out.data.asset;p=out.data.project;}
+    p.scenes[1].audioId=asset.id;p.scenes[1].audioStart=0.3;p.scenes[0].backgroundImageId=background.id;p.scenes[0].backgroundImageOpacity=.67;p.scenes[0].backgroundImageFit='contain';p.scenes[0].fontAssetId=font.id;p.scenes[0].fontFamily='Custom Fallback, serif';
     out=await request(`/api/projects/${id}/save`,'PUT',JSON.stringify(p),{'content-type':'application/json'});assert.equal(out.status,200);p=out.data.project;
     out=await request(`/api/projects/${id}/assets/${asset.id}`,'GET',undefined,{'range':'bytes=0-3'});assert.equal(out.status,206);assert.equal(out.data.toString(),'RIFF');
     out=await request(`/api/projects/${id}/download`);assert.equal(out.status,200);assert.equal(out.data.subarray(0,4).toString('hex'),'504b0304');
     const zipped=out.data;
     out=await request('/api/import','POST',zipped,{'content-type':'application/zip'});assert.equal(out.status,201);const copy=out.data.project;assert.notEqual(copy.id,id);
     assert.equal(copy.scenes[1].audioId,asset.id);assert.equal(copy.scenes[0].title,'Intro survives restart');
+    assert.equal(copy.scenes[0].backgroundImageId,background.id);assert.equal(copy.scenes[0].backgroundImageOpacity,.67);assert.equal(copy.scenes[0].backgroundImageFit,'contain');assert.equal(copy.scenes[0].fontAssetId,font.id);assert.equal(copy.scenes[0].fontFamily,'Custom Fallback, serif');
     out=await request(`/api/projects/${copy.id}/assets/${asset.id}`);assert.equal(out.status,200);assert.equal(out.data.length,wav().length);
-    out=await request(`/api/projects/${id}/backups`);assert.equal(out.status,200);assert.ok(out.data.backups.length>0);
+    out=await request(`/api/projects/${copy.id}/assets/${font.id}`);assert.equal(out.status,200);assert.equal(Buffer.compare(out.data,fontBytes),0);
+    out=await request(`/api/projects/${id}/backups`);assert.equal(out.status,200);assert.ok(out.data.backups.length>0);const backups=out.data.backups;
     const original=await request(`/api/projects/${id}`);assert.equal(original.data.project.scenes[1].audioStart,0.3);
     const json=JSON.parse(await readFile(path.join(root,'projects',id,'project.json'),'utf8'));
     assert.equal(json.scenes[0].title,'Intro survives restart');assert.ok((await readdir(path.join(root,'projects',id,'backups'))).length>0);
+    // v0.1 projects lacking visual/font fields are opened with v0.2 defaults without deleting media.
+    delete json.scenes[0].backgroundImageId;delete json.scenes[0].backgroundImageOpacity;delete json.scenes[0].backgroundImageFit;delete json.scenes[0].fontAssetId;delete json.scenes[0].fontFamily;await writeFile(path.join(root,'projects',id,'project.json'),JSON.stringify(json));
+    out=await request(`/api/projects/${id}`);assert.equal(out.status,200);assert.equal(out.data.project.scenes[0].backgroundImageOpacity,.22);assert.equal(out.data.project.scenes[0].backgroundImageFit,'cover');assert.equal(out.data.project.scenes[0].fontFamily,'Inter, Segoe UI, Arial, sans-serif');
     // Restore snapshot and check user-facing backup cycle works.
-    out=await request(`/api/projects/${id}/backups/${out.data.backups[0]}/restore`,'POST');assert.equal(out.status,200);
+    out=await request(`/api/projects/${id}/backups/${backups[0]}/restore`,'POST');assert.equal(out.status,200);
     assert.ok(out.data.project.revision>p.revision);
     // Even if the main JSON is corrupted, the server can recover its last valid snapshot.
     await writeFile(path.join(root,'projects',id,'project.json'),'{BROKEN JSON');
